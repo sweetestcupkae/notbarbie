@@ -5,9 +5,7 @@ app.get("/", (req, res) => {
   res.send("Bot is alive!");
 });
 
-app.listen(process.env.PORT || 3000, () => {
-  console.log("Web server running");
-});
+app.listen(process.env.PORT || 3000);
 
 const { Client, GatewayIntentBits } = require("discord.js");
 
@@ -18,91 +16,54 @@ const client = new Client({
   ]
 });
 
-console.log("notbarbie starting...");
-
-// ================= CONFIG =================
 const ROLE_ID = "1493417031503056996";
 const ACCESS_CHANNEL_ID = "1493388203565125762";
 const REPORT_CHANNEL_ID = "1493391391219519488";
 
-// ================= STATE =================
-// prevents duplicate triggers per session
-const activeUsers = new Set();
+// TRACK USERS PROCESSED
+const handled = new Set();
 
-// stores kick timers so we can safely track them
-const pending = new Map();
-
-// ================= READY =================
 client.once("ready", () => {
   console.log(`Logged in as ${client.user.tag}`);
 });
 
-// ================= MAIN LOGIC =================
-client.on("guildMemberUpdate", async (oldMember, newMember) => {
-  try {
-    const hadRole = oldMember.roles.cache.has(ROLE_ID);
-    const hasRole = newMember.roles.cache.has(ROLE_ID);
+// 🔥 RUN ONLY WHEN USER JOINS
+client.on("guildMemberAdd", async (member) => {
 
-    // ONLY RUN WHEN ROLE IS FIRST ADDED
-    if (!hadRole && hasRole) {
+  const userId = member.id;
 
-      const userId = newMember.id;
+  if (handled.has(userId)) return;
+  handled.add(userId);
 
-      // HARD GUARD AGAINST DUPLICATES
-      if (activeUsers.has(userId)) return;
-      activeUsers.add(userId);
+  setTimeout(() => handled.delete(userId), 10 * 60 * 1000);
 
-      // auto cleanup after 5 min
-      setTimeout(() => activeUsers.delete(userId), 5 * 60 * 1000);
+  const accessChannel = await member.guild.channels.fetch(ACCESS_CHANNEL_ID).catch(() => null);
+  const reportChannel = await member.guild.channels.fetch(REPORT_CHANNEL_ID).catch(() => null);
 
-      const guild = newMember.guild;
-
-      // ================= ACCESS MESSAGE =================
-      const accessChannel = await guild.channels.fetch(ACCESS_CHANNEL_ID).catch(() => null);
-
-      if (accessChannel) {
-        await accessChannel.send(
-          `<@${userId}> you have been granted access. Please proceed to <#${REPORT_CHANNEL_ID}>.`
-        );
-      }
-
-      // ================= REPORT WARNING =================
-      const reportChannel = await guild.channels.fetch(REPORT_CHANNEL_ID).catch(() => null);
-
-      if (reportChannel) {
-        await reportChannel.send(
-          `⚠️ <@${userId}> please submit a ticket within **10 minutes** or you will be removed.`
-        );
-      }
-
-      // ================= KICK TIMER =================
-      if (pending.has(userId)) return;
-
-      pending.set(userId, true);
-
-      setTimeout(async () => {
-        try {
-          const member = await guild.members.fetch(userId);
-
-          await member.kick("Did not submit ticket in time");
-
-          pending.delete(userId);
-
-          const logChannel = await guild.channels.fetch(REPORT_CHANNEL_ID).catch(() => null);
-          if (logChannel) {
-            logChannel.send(`❌ <@${userId}> was removed for not submitting a ticket in time.`);
-          }
-
-        } catch (err) {
-          console.log("Kick error:", err);
-        }
-      }, 10 * 60 * 1000);
-    }
-
-  } catch (err) {
-    console.log("Error:", err);
+  if (accessChannel) {
+    await accessChannel.send(
+      `<@${userId}> welcome. Go to <#${REPORT_CHANNEL_ID}>`
+    );
   }
+
+  if (reportChannel) {
+    await reportChannel.send(
+      `<@${userId}> create a ticket within 10 minutes or you will be removed.`
+    );
+  }
+
+  setTimeout(async () => {
+    try {
+      const updatedMember = await member.guild.members.fetch(userId);
+
+      if (!updatedMember.roles.cache.has(ROLE_ID)) {
+        await updatedMember.kick("No ticket created");
+      }
+
+    } catch (err) {
+      console.log(err);
+    }
+  }, 10 * 60 * 1000);
 });
 
-// ================= LOGIN =================
-client.login(process.env.TOKEN);
+client
