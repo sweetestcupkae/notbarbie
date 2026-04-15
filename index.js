@@ -25,10 +25,9 @@ const ROLE_ID = "1493417031503056996";
 const ACCESS_CHANNEL_ID = "1493388203565125762";
 const REPORT_CHANNEL_ID = "1493391391219519488";
 
-// ANTI SPAM
-const triggered = new Set();
+// STOP SPAM (GLOBAL LOCK)
+const processedUsers = new Map();
 
-// TRACK USERS
 const pendingUsers = new Map();
 
 client.once("ready", () => {
@@ -45,13 +44,11 @@ client.on("guildMemberUpdate", async (oldMember, newMember) => {
 
       const userId = newMember.id;
 
-      // prevent spam
-      if (triggered.has(userId)) return;
-      triggered.add(userId);
-
-      setTimeout(() => {
-        triggered.delete(userId);
-      }, 60000);
+      // ONLY RUN ONCE PER USER (2 MIN COOLDOWN)
+      const now = Date.now();
+      const last = processedUsers.get(userId);
+      if (last && now - last < 120000) return;
+      processedUsers.set(userId, now);
 
       // ACCESS MESSAGE
       const accessChannel = await newMember.guild.channels.fetch(ACCESS_CHANNEL_ID);
@@ -64,12 +61,12 @@ client.on("guildMemberUpdate", async (oldMember, newMember) => {
         setTimeout(() => msg.delete().catch(() => {}), 60000);
       }
 
-      // REPORT MESSAGE
+      // REPORT MESSAGE + 10 MIN TIMER
       const reportChannel = await newMember.guild.channels.fetch(REPORT_CHANNEL_ID);
 
       if (reportChannel) {
 
-        const warningMsg = await reportChannel.send(
+        await reportChannel.send(
           `<@${userId}> create a ticket within 10 minutes or you will be removed.`
         );
 
