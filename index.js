@@ -20,75 +20,89 @@ const client = new Client({
 
 console.log("notbarbie starting...");
 
-// SETTINGS
+// ================= CONFIG =================
 const ROLE_ID = "1493417031503056996";
 const ACCESS_CHANNEL_ID = "1493388203565125762";
 const REPORT_CHANNEL_ID = "1493391391219519488";
 
-// STOP SPAM (GLOBAL LOCK)
-const processedUsers = new Map();
+// ================= STATE =================
+// prevents duplicate triggers per session
+const activeUsers = new Set();
 
-const pendingUsers = new Map();
+// stores kick timers so we can safely track them
+const pending = new Map();
 
+// ================= READY =================
 client.once("ready", () => {
   console.log(`Logged in as ${client.user.tag}`);
 });
 
+// ================= MAIN LOGIC =================
 client.on("guildMemberUpdate", async (oldMember, newMember) => {
   try {
-
     const hadRole = oldMember.roles.cache.has(ROLE_ID);
     const hasRole = newMember.roles.cache.has(ROLE_ID);
 
+    // ONLY RUN WHEN ROLE IS FIRST ADDED
     if (!hadRole && hasRole) {
 
       const userId = newMember.id;
 
-      // ONLY RUN ONCE PER USER (2 MIN COOLDOWN)
-      const now = Date.now();
-      const last = processedUsers.get(userId);
-      if (last && now - last < 120000) return;
-      processedUsers.set(userId, now);
+      // HARD GUARD AGAINST DUPLICATES
+      if (activeUsers.has(userId)) return;
+      activeUsers.add(userId);
 
-      // ACCESS MESSAGE
-      const accessChannel = await newMember.guild.channels.fetch(ACCESS_CHANNEL_ID);
+      // auto cleanup after 5 min
+      setTimeout(() => activeUsers.delete(userId), 5 * 60 * 1000);
+
+      const guild = newMember.guild;
+
+      // ================= ACCESS MESSAGE =================
+      const accessChannel = await guild.channels.fetch(ACCESS_CHANNEL_ID).catch(() => null);
 
       if (accessChannel) {
-        const msg = await accessChannel.send(
-          `<@${userId}> got access. Go to <#${REPORT_CHANNEL_ID}>`
+        await accessChannel.send(
+          `<@${userId}> you have been granted access. Please proceed to <#${REPORT_CHANNEL_ID}>.`
         );
-
-        setTimeout(() => msg.delete().catch(() => {}), 60000);
       }
 
-      // REPORT MESSAGE + 10 MIN TIMER
-      const reportChannel = await newMember.guild.channels.fetch(REPORT_CHANNEL_ID);
+      // ================= REPORT WARNING =================
+      const reportChannel = await guild.channels.fetch(REPORT_CHANNEL_ID).catch(() => null);
 
       if (reportChannel) {
-
         await reportChannel.send(
-          `<@${userId}> create a ticket within 10 minutes or you will be removed.`
+          `⚠️ <@${userId}> please submit a ticket within **10 minutes** or you will be removed.`
         );
-
-        pendingUsers.set(userId, true);
-
-        setTimeout(async () => {
-          if (pendingUsers.has(userId)) {
-            try {
-              const member = await newMember.guild.members.fetch(userId);
-              await member.kick("No ticket created in time");
-              pendingUsers.delete(userId);
-            } catch (err) {
-              console.log(err);
-            }
-          }
-        }, 10 * 60 * 1000);
       }
+
+      // ================= KICK TIMER =================
+      if (pending.has(userId)) return;
+
+      pending.set(userId, true);
+
+      setTimeout(async () => {
+        try {
+          const member = await guild.members.fetch(userId);
+
+          await member.kick("Did not submit ticket in time");
+
+          pending.delete(userId);
+
+          const logChannel = await guild.channels.fetch(REPORT_CHANNEL_ID).catch(() => null);
+          if (logChannel) {
+            logChannel.send(`❌ <@${userId}> was removed for not submitting a ticket in time.`);
+          }
+
+        } catch (err) {
+          console.log("Kick error:", err);
+        }
+      }, 10 * 60 * 1000);
     }
 
   } catch (err) {
-    console.log(err);
+    console.log("Error:", err);
   }
 });
 
+// ================= LOGIN =================
 client.login(process.env.TOKEN);
